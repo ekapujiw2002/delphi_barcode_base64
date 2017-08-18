@@ -6,15 +6,17 @@ uses
   Windows, Messages, SysUtils, Variants, Classes, Graphics, Controls, Forms,
   Dialogs, uZintBarcode, StdCtrls, jpeg,
 
-  IdCoderMIME;
+  IdCoderMIME,
+  ExtCtrls;
 
 type
   TForm1 = class(TForm)
     btn1: TButton;
     btn2: TButton;
     mmo1: TMemo;
+    img1: TImage;
+    mmo2: TMemo;
     procedure btn2Click(Sender: TObject);
-    procedure btn1Click(Sender: TObject);
   private
     { Private declarations }
   public
@@ -135,21 +137,26 @@ text to barcode base64 image html
 @version
 ----------------------------------------------------------------------}
 
-function TextToBarcodeBase64(const fname: string = ''; const datas: string =
-  '???';
-  const top_text: string =
-  ' '; const bottom_text: string = ' '): string;
+function TextToBarcodeBase64(preview_img: TImage;
+  const top_text: string = '???';
+  const data_text: string = '???';
+  const bottom_text: string = '???';
+  const barcode_height_px: Word = 50;
+  const fname: string = ''): string;
+const
+  padding: Byte = 0;
 var
   resx: string;
   bmpBarcode, bmpAll: TBitmap;
   jpgx: TJPEGImage;
-  i, txt_w, txt_h: Integer;
+  i, txt_w, txt_h, hx1, hx2: Integer;
   s0: Cardinal;
   zintBarcode: TZintBarcode;
   memstream: TMemoryStream;
 
 begin
   resx := '';
+  txt_w := 0;
   try
     bmpBarcode := TBitmap.Create;
     bmpAll := TBitmap.Create;
@@ -160,37 +167,76 @@ begin
     with zintBarcode do
     begin
       //      prepare the barcode
-      Data := datas;
+      zintBarcode.Height := barcode_height_px;
+      BorderWidth := 0;
+      Data := data_text;
       BarcodeType := tBARCODE_CODE128;
       Option1 := 4;
       Scale := 1;
+      ShowHumanReadableText := False;
       GetBarcode(bmpBarcode);
 
       //add top text
       with bmpAll do
       begin
+        //        set font prop
+        Canvas.Font.Size := 12;
+        Canvas.Font.PixelsPerInch := 200;
+
+        //        calculate biggest width and height
+        txt_h := Canvas.TextHeight(data_text);
+
+        if txt_w < Canvas.TextWidth(top_text) then
+          txt_w := Canvas.TextWidth(top_text);
+        if txt_w < Canvas.TextWidth(data_text) then
+          txt_w := Canvas.TextWidth(data_text);
+        if txt_w < Canvas.TextWidth(bottom_text) then
+          txt_w := Canvas.TextWidth(bottom_text);
+
+        //          set total bitmap size
+        Width := txt_w;
+        Height := padding + //padding atas
+        Canvas.TextHeight(top_text) + -4 + //top text
+        padding + //padding
+        zintBarcode.Height + -6 + //barcode
+        padding + //padding
+        Canvas.TextHeight(data_text) + -8 + //data text
+        padding + //padding
+        Canvas.TextHeight(bottom_text) + //bottom text
+        padding; //padding bawah
+
+        //        draw top text, align center
         txt_w := Canvas.TextWidth(top_text);
-        txt_h := Canvas.TextHeight(top_text);
-
-        Width := bmpBarcode.Width;
-        Height := bmpBarcode.Height + (2 * txt_h) + 4;
-
-        //        draw top text
-        Canvas.TextOut((Width - txt_w) div 2, 0, top_text);
+        Canvas.TextOut((Width - txt_w) div 2, -3, top_text);
 
         //draw barcode
-        Canvas.Draw(0, txt_h + 2, bmpBarcode);
+        hx1 := padding + Canvas.TextHeight(top_text) + padding - 5;
+        hx2 := hx1 + barcode_height_px;
+        Canvas.StretchDraw(Rect(0, hx1, Width, hx2),
+          bmpBarcode);
 
-        //        draw bottom_text text
+        //draw data text
+        txt_w := Canvas.TextWidth(data_text);
+        hx1 := hx2 + padding - 7;
+        Canvas.TextOut((Width - txt_w) div 2, hx1,
+          data_text);
+
+        //draw bottom text
         txt_w := Canvas.TextWidth(bottom_text);
-        Canvas.TextOut((Width - txt_w) div 2, Height - txt_h - 4, bottom_text);
+        hx1 := hx1 + Canvas.TextHeight(data_text) - 4;
+        Canvas.TextOut((Width - txt_w) div 2, hx1, bottom_text);
       end;
 
+      //      assign to jpeg
       jpgx.Assign(bmpAll);
       if fname <> '' then
-        jpgx.SaveToFile(fname)
-      else
-        jpgx.SaveToFile(Data + '.jpg');
+        jpgx.SaveToFile(fname);
+      //      else
+      //        jpgx.SaveToFile(Data + '.jpg');
+
+            //        preview it if neccesary
+      if preview_img <> nil then
+        preview_img.Picture.Assign(jpgx);
 
       //save to memstream
       jpgx.SaveToStream(memstream);
@@ -223,18 +269,175 @@ begin
   Result := resx;
 end;
 
-procedure TForm1.btn2Click(Sender: TObject);
+{*--------------------------------------------------------------------
+https://stackoverflow.com/questions/1694001/is-there-a-fast-gettoken-routine-for-delphi
+
+@author
+@version
+----------------------------------------------------------------------}
+
+function GetToken(const Line: string; const Delim: Char {<<==}; const TokenNum:
+  Byte): string;
+{ LK Feb 12, 2007 - This function has been optimized as best as possible }
+{ LK Nov 7, 2009 - Reoptimized using PChars instead of calls to Pos and PosEx }
+{ See; http://stackoverflow.com/questions/1694001/is-there-a-fast-gettoken-routine-for-delphi }
+var
+  I: integer;
+  PLine, PStart: PChar;
 begin
-//  ShowMessage(IntToStr(ord(
-//    CreateBarcode('', '1234567890', FormatDateTime('ddmmyyyy hhnnss', Now),
-//    'Rp 15.000,00')
-//    )));
+  try
+    PLine := PChar(Line);
+    PStart := PLine;
+    inc(PLine);
+    for I := 1 to TokenNum do
+    begin
+      while (PLine^ <> #0) and (PLine^ <> Delim) do
+        inc(PLine);
+      if I = TokenNum then
+      begin
+        SetString(Result, PStart, PLine - PStart);
+        break;
+      end;
+      if PLine^ = #0 then
+      begin
+        Result := '';
+        break;
+      end;
+      inc(PLine);
+      PStart := PLine;
+    end;
+  except
+    Result := '';
+  end;
+end; { GetToken }
+
+{*--------------------------------------------------------------------
+convert string list to barcode list
+
+@author
+@version
+----------------------------------------------------------------------}
+
+function StringListToBarcodeDataList(list_input: TStrings; const data_separator:
+  Char = '|'): TStringList;
+var
+  resx: TStringList;
+  i: Integer;
+begin
+  try
+    resx := TStringList.Create;
+    if (list_input <> nil) and (list_input.Count > 0) then
+    begin
+      for i := 0 to list_input.Count - 1 do
+      begin
+        //Form1.mmo2.Lines.Add(GetToken(list_input[i], '|', 3));
+        resx.Add(
+          TextToBarcodeBase64(
+          nil,
+          GetToken(list_input[i], data_separator, 1),
+          GetToken(list_input[i], data_separator, 2),
+          GetToken(list_input[i], data_separator, 3),
+          40 {
+          ,
+                    GetToken(list_input[i], '|', 2) + '.jpg'
+          }
+          ));
+      end;
+    end;
+  except
+    on errx: Exception do
+    begin
+      resx := nil;
+    end;
+  end;
+  Result := resx;
 end;
 
-procedure TForm1.btn1Click(Sender: TObject);
+{*--------------------------------------------------------------------
+take data list string separated by | sign  into html format
+
+@author
+@version
+----------------------------------------------------------------------}
+
+function DataListToHTMLBarcode(data_in: TStringList; const column_num: Byte = 3; const
+  barcode_height_mm: Byte =
+  18; const barcode_margin_mm: Byte = 2; const fn: string = ''): Integer;
+const
+  html_header: string = '<!doctype html>' +
+  '<html>' +
+    '<head>' +
+    '<style>' +
+    '	body{' +
+    '		padding:0;' +
+    '		margin:0;' +
+    '	}' +
+    '	' +
+    '	img{' +
+    '		height: %dmm!important;' +
+    '		margin-right: %dmm!important;' +
+    '		margin-bottom: %dmm!important;' +
+    '	}' +
+    '</style>' +
+    '</head>' +
+    '<body>';
+
+  img_content: string = '<img src="%s"/>';
+  html_footer: string = '</body></html>';
+
+var
+  resx, i: Integer;
+  fres: TMemoryStream;
+  sbuff: string;
 begin
-  mmo1.Text := TextToBarcodeBase64('', '1234567890', 'HELLO WORLD',
-    'Rp 1.2345,00');
+  try
+    resx := 0;
+
+    if data_in.Count = 0 then
+    begin
+      resx := 1;
+    end
+    else
+    begin
+
+      if fn <> '' then
+      begin
+        fres := TMemoryStream.Create;
+        fres.Position := 0;
+
+        sbuff := Format(html_header, [barcode_height_mm,
+          barcode_margin_mm, barcode_margin_mm]);
+        fres.Write(sbuff[1], Length(sbuff));
+
+        for i := 0 to data_in.Count - 1 do
+        begin
+          sbuff := Format(img_content, [data_in[i]]);
+          if (i mod column_num = (column_num - 1)) and (i <> 0) then
+            sbuff := sbuff + '<br/>';
+          fres.Write(sbuff[1], Length(sbuff));
+        end;
+        fres.Write(html_footer[1], Length(html_footer));
+        fres.SaveToFile(fn);
+        FreeAndNil(fres);
+      end
+      else
+        resx := 2;
+    end;
+  except
+    on err: Exception do
+    begin
+      //ShowMessage(err.Message);
+      FreeAndNil(fres);
+      resx := 255;
+    end;
+  end;
+  Result := resx;
+end;
+
+procedure TForm1.btn2Click(Sender: TObject);
+begin
+  DataListToHTMLBarcode(StringListToBarcodeDataList(mmo1.Lines), 3, 30, 2,
+    'tesx.html');
 end;
 
 end.
